@@ -2,91 +2,68 @@
 #include <nRF24L01.h>
 #include <RF24.h>
 
-RF24 radio(7, 8);                   // Attaching CSN, CE, Radio object creation
+// Create an RF24 object for communication with CE and CSN pins
+RF24 radio(9, 10); 
 
-const byte address[6] = "092004";   // Address for transmitter
+// Define the communication address (same for both transmitter and receiver)
+const byte address[6] = "00001"; 
 
-int px_axis_trans;
-int py_axis_trans;
-int px_axis_rot;
-
-int x_axis_trans;
-int y_axis_trans;
-int x_axis_rot;
-
-int joystick[3];
-
+// Variables for analog input readings and communication
+int unmappedX;   // Raw X-axis reading from analog input
+int x;           // Mapped X-axis value
+int y;           // Y-axis reading from analog input
+int rot;         // Rotational input reading
+int arr[3] = {0, 0, 0}; // Array to store and send the data
 
 void setup() {
-  
+  // Initialize serial communication for debugging
   Serial.begin(9600);
 
-  px_axis_trans = 15;
-  py_axis_trans = 14;
-  px_axis_rot = 16;
+  // Initialize the radio module
+  radio.begin();
+  radio.setPALevel(RF24_PA_LOW); // Set Power Amplifier level to LOW for shorter range
+  radio.openWritingPipe(address); // Open the writing pipe using the specified address
+  radio.stopListening(); // Set the module as a transmitter
 
-  pinMode(px_axis_trans, INPUT);
-  pinMode(py_axis_trans, INPUT);
-  pinMode(px_axis_rot, INPUT);
-
-  radio.begin();                          // Start protocols
-  radio.openWritingPipe(address);         // Set as transmitter
-  radio.setPALevel(RF24_PA_LOW);          // Set power amplifier to LOW
-  radio.stopListening();                  // Start transmitting
-
-
-
+  // Configure input pins for joystick analog readings
+  pinMode(A0, INPUT); // Y-axis input
+  pinMode(A3, INPUT); // X-axis input
+  pinMode(A2, INPUT); // Rotational input
 }
 
 void loop() {
+  // Read analog inputs
+  rot = analogRead(A2);        // Read rotational input
+  y = analogRead(A0);          // Read Y-axis input
+  unmappedX = analogRead(A3);  // Read raw X-axis input
   
-  x_axis_trans = analogRead(px_axis_trans);
-  y_axis_trans = analogRead(py_axis_trans);
-  x_axis_rot = analogRead(px_axis_rot);
+  // Map X-axis value from reverse scale (1023 to 0)
+  x = map(unmappedX, 0, 1023, 1023, 0);
+  
+  // Store values in the array for transmission
+  arr[0] = y;
+  arr[1] = x;
+  arr[2] = rot;
 
-  joystick[3] = {x_axis_trans, y_axis_trans, x_axis_rot};
-  radio.write(&joystick, sizeof(joystick));
-
-   
-}
-
-/*
-MEGA: CSN = 8, CE = 7, SCK = 52, MOSI = 51, MISO = 50
-UNO: SCK = 13, MOSI = 11, MISO = 12
-
-RF24 radio(7, 8);                   // Attaching CSN, CE, Radio object creation
-
-const byte address[6] = "092004";   // Address for both transmitter and receiver
-
-void setup()
-{
-radio.begin();
-radio.openWritingPipe(address);         // Transmitter only
-radio.openReadingPipe(0, address);     // Receiver only
-radio.setPALevel(RF24_PA_LOW);
-radio.stopListening();                  // Transmitter only
-radio.startListening(); 	              // Receiver only
-
-}
-
-// Transmitter
-void loop{
-  int joystick[3] = {x_axis_trans, y_axis_trans, x_axis_rot};
-  radio.write(&joystick, sizeof(joystick));
-
-}
-
-// Receiver
-void loop{
-  if(radio.available())
-  {
-    joystick[] = {0, 0, 0};
-    radio.read(&joystick, sizeof(joystick[]));
+  // Send data via RF24 module
+  if (!radio.write(&arr, sizeof(arr))) {
+    // Print error if data transmission fails
+    Serial.println("Data transmission failed");
   }
 
-  int x = joystick[0]; 
-}
+  // Debugging output (uncomment if needed for testing)
+  /*
+  Serial.print("Y = ");
+  Serial.println(y);
+  Serial.print("X = ");
+  Serial.println(x);
+  Serial.print("Rot = ");
+  Serial.println(rot);
+  Serial.println("");
+  */
 
-*/
+  // Delay for a short period to avoid spamming transmissions
+  delay(50);
+}
 
 
