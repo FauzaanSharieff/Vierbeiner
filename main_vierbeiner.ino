@@ -2,44 +2,27 @@
 #include <SPI.h>
 #include <RF24.h>
 
+RF24 radio(48, 49);                                                  // Attaching CSN, CE, Radio object creation
+const byte address[6] = "00001";                                     // Address for receiver
 
-// Declaring variables
-int serv_move_delay;                                               // Delay servo write speed
-int trans_angle_up;                                                // Translational angle - Upper threshold
-int trans_angle_down;                                              // Translational angle - Lower threshold
-int t;                                                             // Rotational angle threshold
-int i;                                                             // Global loop variable
-int joystick[3];                                                   // Array for controller values
-int x_trans;                                                       // Joystick sideways input
-int y_trans;                                                       // Joystick forwards input
-int x_rot;                                                         // Joystick rotation input
+int arr[3] = {0, 0, 0};                                              // Control array init
+int x_trans = 512;                                                   
+int y_trans = 512;
+int rot = 512;
 
 
-// Deriving servo class for custom data members
-class NewServo : public Servo
-{
-  public:
-    int current_angle;
-    int stance_angle;
-    int target_angle;
-    NewServo() : current_angle(0), stance_angle(0), target_angle(0) {}
-};
-
-
-// Array of servo objects
-int servoPins[4][3] = { {2, 3, 4}, {5, 6, 7}, {8, 9, 10}, {11, 12, 13} };
-NewServo serv[4][3];   
-
-
-// Setting up radio
-RF24 radio(7, 8);                                                  // Attaching CSN, CE, Radio object creation
-const byte address[6] = "092004";                                  // Address for receiver
-
-
-// Declaring functions
-
-// Main functions
-void stance();                                                     // Brings robot to a stance state 
+int rot_delay;                                                       // Delay for rotational motors
+int trans_delay;                                                     // Delay fir translational motors
+int t;                                                               // Movement threshold angle
+int i;                                                               // Loop variable
+int trans_up_r;                                                      // Upper angle threshold for right translational motors
+int trans_down_r;                                                    // Lower angle threshold for right translational motors
+int trans_up_l;                                                      // Upper angle threshold for left translational motors
+int trans_down_l;                                                    // Lower angle threshold for right translational motors
+int right_trans_offset;                                              // Angle offset for right translational motors
+int left_trans_offset;                                               // Angle offset for right translational motors
+int upper;                                                           // Upper analog input threshold
+int lower;                                                           // Lower analog input threshold
 
 // Directional movement functions
 void forward1();                                                   // Takes the first step in forward direction
@@ -50,358 +33,307 @@ void right1();                                                     // Takes the 
 void right2();                                                     // Takes the second step in right direction
 void left1();                                                      // Takes the first step in left direction
 void left2();                                                      // Takes the second step in left direction
-
-// Rotational movement functions
-void rotateRight1();                                               // Turns a bit towards right
-void rotateRight2();                                               // Turns a bit more towards right
-void rotateLeft1();                                                // Turns a bit towards left
-void rotateLeft2();                                                // Turns a bit more towards left
-
-// Auxillary functions
-void move(NewServo &serv, int angle);                              // Write angle to servo at controlled speed
-void threshold(int t0, int t1, int t2, int t3);                    // Moves rotational motors simultaneously
+void rotateRight1();                                               // Rotates a step towards right
+void rotateRight2();
+void rotateLeft1();                                                // Rotates a step towards left
+void rotateLeft2();
+void readValues();                                                 // Reads radio signal
 void moveEvenUp();                                                 // Moves translational motors 0 and 2 up
 void moveEvenDown();                                               // Moves translational motors 0 and 2 down
 void moveOddUp();                                                  // Moves translational motors 1 and 3 up
 void moveOddDown();                                                // Moves translational motors 1 and 3 down
+void stance();                                                     // Assumes stance position
 
 
+class NewServo : public Servo                                      // Inheriting from Servo class for custom data members
+{
+  public:
+    int current_angle;
+    int stance_angle;
+    int target_angle;
+    NewServo() : current_angle(0), stance_angle(0), target_angle(0) {}
+};
 
+NewServo serv[4][3];                                               // Array of servo objects
 
-
-
-
-// VOID SETUP AND LOOP ||| VOID SETUP AND LOOP ||| VOID SETUP AND LOOP ||| VOID SETUP AND LOOP 
-
-
-void setup() {
-
-  serv_move_delay = 10;                                            // Initializing variables
-  trans_angle_up = 20;
-  trans_angle_down = 30;
-  t = 30;
-
-  for(int i = 0; i < 4; i++)                                       // Attaching each servo to its respective pin
-  {
-    for(int j = 0; j < 3; j++) 
-    {
-      serv[i][j].attach(servoPins[i][j]);                          
-    }
-  }
-
-  serv[0][0].stance_angle = 45;                                    // Setting rotational stance angles
-  serv[1][0].stance_angle = 135;
-  serv[2][0].stance_angle = 45;
-  serv[3][0].stance_angle = 135;
-
-  for(i = 0; i < 4; i++)
-    move(serv[i][0], serv[i][0].stance_angle);                     // Moving rotational motors to stance manually
-  stance();                                                        // Moving rotational, translational and redundant motors to stance
-
-  for(i = 0; i < 4; i++)                                           // Setting current angles as stance angles
-    serv[i][0].current_angle = serv[i][0].stance_angle;
-
-  radio.begin();                                                   // Starting radio protocols
-  radio.openReadingPipe(0, address);     
-  radio.setPALevel(RF24_PA_LOW);
-  radio.startListening(); 	              
-
-  
-}
-
-
-
-
-/*
-MEGA: CSN = 8, CE = 7, SCK = 52, MOSI = 51, MISO = 50
-UNO: SCK = 13, MOSI = 11, MISO = 12
-
-RF24 radio(7, 8);                   // Attaching CSN, CE, Radio object creation
-
-const byte address[6] = "092004";   // Address for both transmitter and receiver
 
 void setup()
 {
-radio.begin();
-radio.openWritingPipe(address);         // Transmitter only
-radio.openReadingPipe(0, address);     // Receiver only
-radio.setPALevel(RF24_PA_LOW);
-radio.stopListening();                  // Transmitter only
-radio.startListening(); 	              // Receiver only
+  upper = 900;
+  lower = 120;
+  Serial.begin(9600);
 
-}
+  radio.begin();                                                  // Setting up radio protocols
+  radio.openReadingPipe(0, address);     
+  radio.setPALevel(RF24_PA_LOW);
+  radio.startListening(); 
+ 
+  pinMode(46, INPUT_PULLUP);                                      // Safety switch 
 
-// Transmitter
-void loop{
-  int joystick[3] = {x_axis_trans, y_axis_trans, x_axis_rot};
-  radio.write(&joystick, sizeof(joystick));
+  serv[0][0].attach(2);                                           // Attaching servos
+  serv[1][0].attach(3);
+  serv[2][0].attach(4);
+  serv[3][0].attach(5);
+  serv[0][1].attach(6);
+  serv[1][1].attach(7);
+  serv[2][1].attach(8);
+  serv[3][1].attach(9);
+  serv[0][2].attach(10);
+  serv[1][2].attach(11);
+  serv[2][2].attach(12);
+  serv[3][2].attach(13);
 
-}
+  serv[0][0].stance_angle = 40;                                    // Setting rotational stance angles
+  serv[1][0].stance_angle = 140;
+  serv[2][0].stance_angle = 45;                                    
+  serv[3][0].stance_angle = 135;
+  serv[0][0].current_angle = 40;                                   // Initializing system states (joint angles)
+  serv[1][0].current_angle = 140;
+  serv[2][0].current_angle = 45;
+  serv[3][0].current_angle = 135;
+  
+  trans_up_r = 20;                                                 // Setting thresholds and offsets
+  trans_down_r = 70;
+  trans_up_l = 70;
+  trans_down_l = 10;
 
-// Receiver
-void loop{
-  if(radio.available())
+  right_trans_offset = 30;
+  left_trans_offset = 10;
+
+  rot_delay = 3;                                            
+  trans_delay = 5;
+  t = 30;
+
+
+  for(i = 0; i < 4; i++)                                           // Initializing with stance
   {
-    joystick[] = {0, 0, 0};
-    radio.read(&joystick, sizeof(joystick[]));
-  }
+    if(i == 0 || i == 3)
+    {  
+      serv[i][1].write(trans_down_r);
+      serv[i][1].current_angle = trans_down_r;
+      serv[i][2].write(trans_down_r - right_trans_offset);
+      serv[i][2].current_angle = trans_down_r - right_trans_offset;
+    }
+    else
+     {
+      serv[i][1].write(trans_down_l);
+      serv[i][1].current_angle = trans_down_l + left_trans_offset;
+      serv[i][2].write(trans_down_l);
+      serv[i][2].current_angle = trans_down_l + left_trans_offset;
+     }
+  } 
 
-  int x = joystick[0]; 
+
+  serv[3][0].write(serv[3][0].stance_angle);
+  serv[2][0].write(serv[2][0].stance_angle);
+  serv[1][0].write(serv[1][0].stance_angle);
+  serv[0][0].write(serv[0][0].stance_angle);
+  
+  stance();
+  delay(5000);
+
 }
-
-*/
 
 
 void loop()
 {
 
-  if(radio.available())
+  if(digitalRead(46) == 1)                                          // Safety switch case
   {
-    joystick[] = {0, 0, 0};
-    radio.read(&joystick, sizeof(joystick[]));
+    stance();
+    Serial.println("Switch is off.");
+    delay(400);
+    return;
   }
 
-  x_trans = joystick[0];
-  y_trans = joystick[1];
-  x_rot = joystick[2];
-
-  if(y_trans > 1020)
-  forward1();
-  if(y_trans > 1020)                                   
-  forward2();
-  if(y_trans < 3)
-  backward1();
-  if(y_trans < 3)
-  backward2();
-  if(x_trans > 1020)
-  right1();
-  if(x_trans > 1020)                                   
-  right2();
-  if(x_trans < 3)
-  left1();
-  if(x_trans < 3)
-  left2();
-  if(x_rot > 1020)
-  rotateRight1();
-  if(x_rot > 1020)
-  rotateRight2();
-  if(x_rot < 3)
-  rotateLeft1();
-  if(x_rot < 3)
-  rotateLeft2();
+  if(!radio.available())                                             // Checking radio
+  { 
+  Serial.println("Radio not available.");
+  delay(100);
+  return;
+  }
   
-  stance();                                                 
+  readValues();                                                      // Moving based on input
+  if(y_trans > upper)
+  forward1();
 
+  readValues();
+  if(y_trans > upper)                                   
+  forward2();
+
+  readValues();
+  if(y_trans < lower)
+  backward1();
+
+  readValues();
+  if(y_trans < lower)
+  backward2();
+
+  readValues();
+  if(x_trans > upper)
+  right1();
+
+  readValues();
+  if(x_trans > upper)                                   
+  right2();
+
+  readValues();
+  if(x_trans < lower)
+  left1();
+
+  readValues();
+  if(x_trans < lower)
+  left2();
+
+  readValues();
+  if(rot > upper)
+  rotateRight1();
+
+  readValues();
+  if(rot < lower)
+  rotateLeft1();
+
+  if(x_trans > 3 && x_trans < 1020 && y_trans > 3 && y_trans < 1020)
+   stance(); 
+  
+  delay(50);
 }
 
-
-// VOID SETUP AND LOOP ||| VOID SETUP AND LOOP ||| VOID SETUP AND LOOP ||| VOID SETUP AND LOOP 
-
-
-
-
-
-
-
-
-
-
-
-
-
-// VOID STANCE ||| VOID STANCE ||| VOID STANCE ||| VOID STANCE ||| VOID STANCE 
 
 void stance()
 {
-  threshold(serv[0][0].stance_angle, serv[1][0].stance_angle, serv[2][0].stance_angle, serv[3][0].stance_angle);
-
-  if(serv[0][1].current_angle == trans_angle_up || serv[2][1].current_angle == trans_angle_up)
+  moveOddDown();                                                 
   moveEvenDown();
-
-  if(serv[1][1].current_angle == trans_angle_up || serv[3][1].current_angle == trans_angle_up)
-  moveOddDown();
-
 }
 
-// VOID STANCE ||| VOID STANCE ||| VOID STANCE ||| VOID STANCE ||| VOID STANCE 
-
-
-
-
-
-
-
-
-
-// Y-AXIS FUNCTIONS ||| Y-AXIS FUNCTIONS ||| Y-AXIS FUNCTIONS ||| Y-AXIS FUNCTIONS 
 
 void forward1()
 {
-
-  if(serv[0][1].current_angle == trans_angle_down || serv[2][1].current_angle == trans_angle_down)
-  moveEvenUp();                                                   
-
-  threshold(serv[0][0].stance_angle + t, serv[1][0].stance_angle + t, serv[2][0].stance_angle - t, serv[0][3].stance_angle - t);
+  if(serv[0][1].current_angle == trans_down_r || serv[2][1].current_angle == trans_down_l)
+  {
+    moveOddDown();
+    moveEvenUp(); 
+  }                                                  
+   
+  threshold(serv[0][0].stance_angle + t, serv[1][0].stance_angle + t, serv[2][0].stance_angle - t, serv[3][0].stance_angle - t);
 
   moveEvenDown();
   moveOddUp();
 
-  threshold(serv[0][0].stance_angle - t, serv[1][0].stance_angle - t, serv[2][0].stance_angle + t, serv[0][3].stance_angle + t);
-
+  threshold(serv[0][0].stance_angle, serv[1][0].stance_angle, serv[2][0].stance_angle, serv[3][0].stance_angle);
 }
 
 
 void forward2()
-{                                                                 
-  
-  threshold(serv[0][0].stance_angle - t, serv[1][0].stance_angle - t, serv[2][0].stance_angle + t, serv[0][3].stance_angle + t);
+{           
+  threshold(serv[0][0].stance_angle - t, serv[1][0].stance_angle - t, serv[2][0].stance_angle + t, serv[3][0].stance_angle + t);
   
   moveOddDown();
   moveEvenUp();
   
-  threshold(serv[0][0].stance_angle + t, serv[1][0].stance_angle + t, serv[2][0].stance_angle - t, serv[0][3].stance_angle - t);
-  
+  threshold(serv[0][0].stance_angle, serv[1][0].stance_angle, serv[2][0].stance_angle, serv[3][0].stance_angle);
 }
 
 
 void backward1()
 {
+  if(serv[0][1].current_angle == trans_down_r || serv[2][1].current_angle == trans_down_l)
+  {
+    moveOddDown();
+    moveEvenUp();
+  }
 
-  if(serv[0][1].current_angle == trans_angle_down || serv[2][1].current_angle == trans_angle_down)
-  moveEvenUp();
-
-  threshold(serv[0][0].stance_angle - t, serv[1][0].stance_angle - t, serv[2][0].stance_angle + t, serv[0][3].stance_angle + t);
+  threshold(serv[0][0].stance_angle - t, serv[1][0].stance_angle - t, serv[2][0].stance_angle + t, serv[3][0].stance_angle + t);
 
   moveEvenDown();
   moveOddUp();
 
-  threshold(serv[0][0].stance_angle + t, serv[1][0].stance_angle + t, serv[2][0].stance_angle - t, serv[0][3].stance_angle - t);
-  
+  threshold(serv[0][0].stance_angle, serv[1][0].stance_angle, serv[2][0].stance_angle, serv[3][0].stance_angle); 
 }
 
 
 void backward2()
 {                                                 
-
-  threshold(serv[0][0].stance_angle + t, serv[1][0].stance_angle + t, serv[2][0].stance_angle - t, serv[0][3].stance_angle - t);
-
-  moveEvenDown();
-  moveOddUp();
-
-  threshold(serv[0][0].stance_angle - t, serv[1][0].stance_angle - t, serv[2][0].stance_angle + t, serv[0][3].stance_angle + t);
-  
-}
-
-
-// Y-AXIS FUNCTIONS ||| Y-AXIS FUNCTIONS ||| Y-AXIS FUNCTIONS ||| Y-AXIS FUNCTIONS ||| Y-AXIS FUNCTIONS 
-
-
-
-
-
-
-
-
-
-// X-AXIS FUNCTIONS ||| X-AXIS FUNCTIONS ||| X-AXIS FUNCTIONS ||| X-AXIS FUNCTIONS ||| X-AXIS FUNCTIONS 
-
-
-void right1()
-{
-  
-  if(serv[1][1].current_angle == trans_angle_down || serv[1][1].current_angle == trans_angle_down)
-  moveOddUp();
-
-  threshold(serv[0][0].stance_angle + t, serv[1][0].stance_angle - t, serv[2][0].stance_angle - t, serv[0][3].stance_angle + t);
+  threshold(serv[0][0].stance_angle + t, serv[1][0].stance_angle + t, serv[2][0].stance_angle - t, serv[3][0].stance_angle - t);
 
   moveOddDown();
   moveEvenUp();
 
-  threshold(serv[0][0].stance_angle - t, serv[1][0].stance_angle + t, serv[2][0].stance_angle + t, serv[0][3].stance_angle - t);
+  threshold(serv[0][0].stance_angle, serv[1][0].stance_angle, serv[2][0].stance_angle, serv[3][0].stance_angle);  
+}
 
+
+void right1()
+{
+  if(serv[1][1].current_angle == trans_down_l || serv[3][1].current_angle == trans_down_r)
+  {
+    moveEvenDown();
+    moveOddUp();
+  }
+
+  threshold(serv[0][0].stance_angle + t, serv[1][0].stance_angle - t, serv[2][0].stance_angle - t, serv[3][0].stance_angle + t);
+
+  moveOddDown();
+  moveEvenUp();
+
+  threshold(serv[0][0].stance_angle, serv[1][0].stance_angle, serv[2][0].stance_angle, serv[3][0].stance_angle);
 }
 
 
 void right2()
 {
-
-  threshold(serv[0][0].stance_angle - t, serv[1][0].stance_angle + t, serv[2][0].stance_angle + t, serv[0][3].stance_angle - t);
+  threshold(serv[0][0].stance_angle - t, serv[1][0].stance_angle + t, serv[2][0].stance_angle + t, serv[3][0].stance_angle - t);
 
   moveEvenDown();
   moveOddUp();
 
-  threshold(serv[0][0].stance_angle + t, serv[1][0].stance_angle - t, serv[2][0].stance_angle - t, serv[0][3].stance_angle + t);
-
+  threshold(serv[0][0].stance_angle, serv[1][0].stance_angle, serv[2][0].stance_angle, serv[3][0].stance_angle);
 }
 
 
 void left1()
 {
+  if(serv[1][1].current_angle == trans_down_l || serv[3][1].current_angle == trans_down_r)
+  {
+    moveEvenDown();
+    moveOddUp();
+  }
 
-  if(serv[1][1].current_angle == trans_angle_down || serv[1][1].current_angle == trans_angle_down)
-  moveOddUp();
-
-  threshold(serv[0][0].stance_angle - t, serv[1][0].stance_angle + t, serv[2][0].stance_angle + t, serv[0][3].stance_angle - t);
+  threshold(serv[0][0].stance_angle - t, serv[1][0].stance_angle + t, serv[2][0].stance_angle + t, serv[3][0].stance_angle - t);
 
   moveOddDown();
   moveEvenUp();
 
-  threshold(serv[0][0].stance_angle + t, serv[1][0].stance_angle - t, serv[2][0].stance_angle - t, serv[0][3].stance_angle + t);
-
+  threshold(serv[0][0].stance_angle, serv[1][0].stance_angle, serv[2][0].stance_angle, serv[3][0].stance_angle);
 }
 
 
 void left2()
 {
-
-  threshold(serv[0][0].stance_angle + t, serv[1][0].stance_angle - t, serv[2][0].stance_angle - t, serv[0][3].stance_angle + t);
+  threshold(serv[0][0].stance_angle + t, serv[1][0].stance_angle - t, serv[2][0].stance_angle - t, serv[3][0].stance_angle + t);
 
   moveEvenDown();
   moveOddUp();
 
-  threshold(serv[0][0].stance_angle - t, serv[1][0].stance_angle + t, serv[2][0].stance_angle + t, serv[0][3].stance_angle - t);
-
+  threshold(serv[0][0].stance_angle, serv[1][0].stance_angle, serv[2][0].stance_angle, serv[3][0].stance_angle);
 }
-
-
-// X-AXIS FUNCTIONS ||| X-AXIS FUNCTIONS ||| X-AXIS FUNCTIONS ||| X-AXIS FUNCTIONS ||| X-AXIS FUNCTIONS 
-
-
-
-
-
-
-
-
-
-// ROTATION FUNCTIONS ||| ROTATION FUNCTIONS ||| ROTATION FUNCTIONS ||| ROTATION FUNCTIONS
 
 
 void rotateRight1()
 {
   
-  if(serv[0][1].current_angle == trans_angle_down || serv[2][1].current_angle == trans_angle_down)
-  moveEvenUp();
+  if(serv[0][1].current_angle == trans_down_r || serv[2][1].current_angle == trans_down_l)
+  {
+    moveOddDown();
+    moveEvenUp();
+  }
 
-  threshold(serv[0][0].stance_angle - t, serv[1][0].stance_angle + t, serv[2][0].stance_angle - t, serv[0][3].stance_angle + t);
+  threshold(serv[0][0].stance_angle - t, serv[1][0].stance_angle + t, serv[2][0].stance_angle - t, serv[3][0].stance_angle + t);
 
   moveEvenDown();
   moveOddUp();
 
-  threshold(serv[0][0].stance_angle + t, serv[1][0].stance_angle - t, serv[2][0].stance_angle + t, serv[0][3].stance_angle - t);
-
-}
-
-
-void rotateRight2()
-{
-
-  threshold(serv[0][0].stance_angle + t, serv[1][0].stance_angle - t, serv[2][0].stance_angle + t, serv[0][3].stance_angle - t);
-
-  moveOddDown();
-  moveEvenUp();
-
-  threshold(serv[0][0].stance_angle - t, serv[1][0].stance_angle + t, serv[2][0].stance_angle - t, serv[0][3].stance_angle + t);
+  threshold(serv[0][0].stance_angle, serv[1][0].stance_angle, serv[2][0].stance_angle, serv[3][0].stance_angle);
 
 }
 
@@ -409,65 +341,20 @@ void rotateRight2()
 void rotateLeft1()
 {
 
-  if(serv[1][1].current_angle == trans_angle_down || serv[3][1].current_angle == trans_angle_down)
-  moveOddUp();
-
-  threshold(serv[0][0].stance_angle - t, serv[1][0].stance_angle + t, serv[2][0].stance_angle - t, serv[0][3].stance_angle + t);
+  if(serv[1][1].current_angle == trans_down_l || serv[3][1].current_angle == trans_down_r)
+  {
+    moveEvenDown();
+    moveOddUp();
+  }
+  threshold(serv[0][0].stance_angle - t, serv[1][0].stance_angle + t, serv[2][0].stance_angle - t, serv[3][0].stance_angle + t);
 
   moveOddDown();
   moveEvenUp();
 
-  threshold(serv[0][0].stance_angle + t, serv[1][0].stance_angle - t, serv[2][0].stance_angle + t, serv[0][3].stance_angle - t);
+  threshold(serv[0][0].stance_angle, serv[1][0].stance_angle, serv[2][0].stance_angle, serv[3][0].stance_angle);
 
 }
 
-
-void rotateLeft2()
-{
-
-  threshold(serv[0][0].stance_angle - t, serv[1][0].stance_angle + t, serv[2][0].stance_angle - t, serv[0][3].stance_angle + t);
-
-  moveEvenDown();
-  moveOddUp();
-
-  threshold(serv[0][0].stance_angle + t, serv[1][0].stance_angle - t, serv[2][0].stance_angle + t, serv[0][3].stance_angle - t);
-
-}
-
-
-// ROTATION FUNCTIONS ||| ROTATION FUNCTIONS ||| ROTATION FUNCTIONS ||| ROTATION FUNCTIONS 
-
-
-
-
-
-
-
-
-
-// VOID MOVE ||| VOID MOVE ||| VOID MOVE ||| VOID MOVE ||| VOID MOVE ||| VOID MOVE
-
-void move(NewServo &serv, int angle) 
-{
- for (i = serv.current_angle; i != angle; i += (serv.current_angle < angle) ? 1 : -1)
- {
-  serv.write(i);
-  delay(serv_move_delay);
- }
-  serv.current_angle = angle;
-}
-
-// VOID MOVE ||| VOID MOVE ||| VOID MOVE ||| VOID MOVE ||| VOID MOVE ||| VOID MOVE
-
-
-
-
-
-
-
-
-
-// VOID THRESHOLD ||| VOID THRESHOLD ||| VOID THRESHOLD ||| VOID THRESHOLD ||| VOID THRESHOLD 
 
 void threshold(int t0, int t1, int t2, int t3)
 {
@@ -475,205 +362,135 @@ void threshold(int t0, int t1, int t2, int t3)
   serv[1][0].target_angle = t1;
   serv[2][0].target_angle = t2;
   serv[3][0].target_angle = t3;
-  bool flag = false;
-  while(true)
+  
+  bool flag = true;
+
+  while(flag)
   {
+    flag = false;  // Assume flag can be false unless proven otherwise in this iteration
+
     for(i = 0; i < 4; i++)
     {
       if(serv[i][0].current_angle > serv[i][0].target_angle)
-      move(serv[i][0], serv[i][0].current_angle - 1);
+      {
+        serv[i][0].write(serv[i][0].current_angle - 1);
+        serv[i][0].current_angle--;
+        flag = true; // Still work to do
+        delay(rot_delay);
+      }
       else if (serv[i][0].current_angle < serv[i][0].target_angle)
-      move(serv[i][0], serv[i][0].current_angle + 1);
-
-      if(serv[3][0].current_angle == serv[3][0].target_angle)
-      flag = true;
+      {
+        serv[i][0].write(serv[i][0].current_angle + 1);
+        serv[i][0].current_angle++;
+        flag = true; // Still work to do
+        delay(rot_delay);
+      }
+      
     }
-    if(flag)
-    break;
   }
 }
 
-// VOID THRESHOLD ||| VOID THRESHOLD ||| VOID THRESHOLD ||| VOID THRESHOLD ||| VOID THRESHOLD 
+
+void readValues()
+{
+  int a = 0;
+  int b = 0;
+  int c = 0;
+  if(radio.available())
+  {
+    Serial.println("Reads radio");
+    radio.read(&arr, sizeof(arr));
+    a = arr[0];
+    b = arr[1];
+    c = arr[2];
+  }
+  
+  Serial.println("READ VALUES HAPENNED!!!!");
+  
+  y_trans = a;
+  x_trans = b;
+  rot = c;
+
+    Serial.print("Y-axis: ");
+    Serial.println(y_trans);
+    Serial.print("X-axis: ");
+    Serial.println(x_trans);
+    Serial.print("Rotation: ");
+    Serial.println(rot);
+    Serial.println("");
 
 
-
-
-
-
-
-
-
-// TRANSLATIONAL AND REDUNDANT MOTOR FUNCTIONS ||| TRANSLATIONAL AND REDUNDANT MOTOR FUNCTIONS 
+}
 
 
 void moveEvenUp()                                                          // Moves 0 and 2 translational and redundant motors up
 {
-  for(; serv[0][1].current_angle > trans_angle_up || serv[2][1].current_angle > trans_angle_up; )
+  for(; serv[0][1].current_angle > trans_up_r || serv[2][1].current_angle < trans_up_l; )
   {
-    for(i = 0; i < 3; i++)                                        
-    {
-      if(i % 2 == 0)
-      {
-        move(serv[i][1], serv[i][1].current_angle - 1);
-        move(serv[i][2], 90 - serv[i][1].current_angle);
-      }
-    }
+    serv[0][1].write(serv[0][1].current_angle - 1);
+    serv[0][1].current_angle--;
+    serv[0][2].write(serv[0][1].current_angle - right_trans_offset);
+    serv[0][2].current_angle = serv[0][1].current_angle - right_trans_offset;
+
+    serv[2][1].write(serv[2][1].current_angle + 1);
+    serv[2][1].current_angle++;
+    serv[2][2].write(serv[2][1].current_angle + left_trans_offset);
+    serv[2][2].current_angle = serv[2][1].current_angle + left_trans_offset;
+    delay(trans_delay);
+
   }
 }
 
 void moveEvenDown()                                                        // Moves 0 and 2 translational and redundant motors down
 {
-  for(; serv[0][1].current_angle < trans_angle_down || serv[2][1].current_angle < trans_angle_down; )
+    for(; serv[0][1].current_angle < trans_down_r || serv[2][1].current_angle > trans_down_l; )
   {
-    for(i = 0; i < 3; i++)                                            
-    {
-      if(i % 2 == 0)
-      {
-        move(serv[i][1], serv[i][1].current_angle + 1);
-        move(serv[i][2], 90 - serv[i][1].current_angle);
-      }
-    }
+    serv[0][1].write(serv[0][1].current_angle + 1);
+    serv[0][1].current_angle++;
+    serv[0][2].write(serv[0][1].current_angle - right_trans_offset);
+    serv[0][2].current_angle = serv[0][1].current_angle - right_trans_offset;
+
+    serv[2][1].write(serv[2][1].current_angle - 1);
+    serv[2][1].current_angle--;
+    serv[2][2].write(serv[2][1].current_angle + left_trans_offset);
+    serv[2][2].current_angle = serv[2][1].current_angle + left_trans_offset;
+    delay(trans_delay);
   }
 }
 
-void moveOddUp()                                                          // Moves 1 and 3 translational and redundant motors up
+void moveOddUp()                                                           // Moves 1 and 3 translational and redundant motors up
 {
-  for(; serv[1][1].current_angle > trans_angle_up || serv[3][1].current_angle > trans_angle_up; )
+  for(; serv[3][1].current_angle > trans_up_r || serv[1][1].current_angle < trans_up_l; )
   {
-    for(i = 1; i < 4; i++)                                         
-    {
-      if(i % 2 != 0)
-      {
-        move(serv[i][1], serv[i][1].current_angle - 1);
-        move(serv[i][2], 90 - serv[i][1].current_angle);
-      }
-    }
+    serv[3][1].write(serv[3][1].current_angle - 1);
+    serv[3][1].current_angle--;
+    serv[3][2].write(serv[3][1].current_angle - right_trans_offset);
+    serv[3][2].current_angle = serv[3][1].current_angle - right_trans_offset;
+
+    serv[1][1].write(serv[1][1].current_angle + 1);
+    serv[1][1].current_angle++;
+    serv[1][2].write(serv[1][1].current_angle + left_trans_offset);
+    serv[1][2].current_angle = serv[1][1].current_angle + left_trans_offset;
+    delay(trans_delay);
   }
 }
 
-void moveOddDown()                                                            // Moves 1 and 3 translational and redundant motors down
+void moveOddDown()                                                         // Moves 1 and 3 translational and redundant motors down
 {
-  for(; serv[1][1].current_angle < trans_angle_down || serv[3][1].current_angle < trans_angle_down; )
+   for(; serv[3][1].current_angle < trans_down_r || serv[1][1].current_angle > trans_down_l; )
   {
-    for(i = 1; i < 4; i++)                                            
-    {
-      if(i % 2 != 0)
-      {
-        move(serv[i][1], serv[i][1].current_angle + 1);
-        move(serv[i][2], 90 - serv[i][1].current_angle);
-      }
-    }
+    serv[3][1].write(serv[3][1].current_angle + 1);
+    serv[3][1].current_angle++;
+    serv[3][2].write(serv[3][1].current_angle - right_trans_offset);
+    serv[3][2].current_angle = serv[3][1].current_angle - right_trans_offset;
+
+    serv[1][1].write(serv[1][1].current_angle - 1);
+    serv[1][1].current_angle--;
+    serv[1][2].write(serv[1][1].current_angle + left_trans_offset);
+    serv[1][2].current_angle = serv[1][1].current_angle + left_trans_offset;
+    delay(trans_delay);
   }
 }
 
 
-// TRANSLATIONAL AND REDUNDANT MOTOR FUNCTIONS ||| TRANSLATIONAL AND REDUNDANT MOTOR FUNCTIONS 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-/*
-
-void diagonalRight1()
-{
-
-  if(serv[1][1].current_angle == trans_angle_down || serv[3][1].current_angle == trans_angle_down)
-  moveOddUp();
-
-  threshold(serv[0][0].stance_angle - 0, serv[1][0].stance_angle - t, serv[2][0].stance_angle + 0, serv[0][3].stance_angle + t);
-
-  moveOddDown();
-  moveEvenUp();
-
-  threshold(serv[0][0].stance_angle + 0, serv[1][0].stance_angle + t, serv[2][0].stance_angle + 0, serv[0][3].stance_angle - t);
-
-}
-
-
-
-
-// SLOW SERVO LOOP ||| SLOW SERVO LOOP ||| SLOW SERVO LOOP ||| SLOW SERVO LOOP ||| SLOW SERVO LOOP
-
-void loop() {
- for (i = 0; i != angle_thr; i++)
- {
-  serv.write(i);
-  delay(serv_move_delay);
- }
-  for (i = angle_thr; i != 0; i--)
- {
-  serv.write(i);
-  delay(serv_move_delay);
- }
-}
-
-// SLOW SERVO LOOP ||| SLOW SERVO LOOP ||| SLOW SERVO LOOP ||| SLOW SERVO LOOP ||| SLOW SERVO LOOP
-
-
-
-
-
-
-
-
-
-// OLD ROTATIONAL MOTOR ALGORITHM ||| OLD ROTATIONAL MOTOR ALGORITHM ||| OLD ROTATIONAL MOTOR ALGORITHM 
-
-for(i = 0; i < 30; i++)                                     // Moves all rotational motors to their forward1() thresholds
-  {
-    for(j = 0; j < 4; j++)
-    {
-      if(j < 2)                                                  
-        move(serv[j][0], serv[j][0].current_angle + 1);
-      else
-        move(serv[j][0], serv[j][0].current_angle - 1);
-    }
-  }
-
-// OLD ROTATIONAL MOTOR ALGORITHM ||| OLD ROTATIONAL MOTOR ALGORITHM ||| OLD ROTATIONAL MOTOR ALGORITHM 
-
-
-
-
-
-
-
-
-
-// SERVO OBJECT NAMES ||| SERVO OBJECT NAMES ||| SERVO OBJECT NAMES ||| SERVO OBJECT NAMES 
-
-Servo serv11;
-Servo serv12;
-Servo serv13;
-
-Servo serv21;
-Servo serv22;
-Servo serv23;
-
-Servo serv31;
-Servo serv32;
-Servo serv33;
-
-Servo serv41;
-Servo serv42;
-Servo serv43;
-
-// SERVO OBJECT NAMES ||| SERVO OBJECT NAMES ||| SERVO OBJECT NAMES ||| SERVO OBJECT NAMES 
-
-*/
